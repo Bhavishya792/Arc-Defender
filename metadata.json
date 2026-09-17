@@ -1,0 +1,6 @@
+{
+  "name": "ARC Defender",
+  "description": "Web Application Attack Detection & Traffic Intelligence System",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

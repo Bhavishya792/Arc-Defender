@@ -1,0 +1,708 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ARC Defender</title>
+    <meta name="description" content="Web Application Attack Detection & Traffic Intelligence System">
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="/static/chart.umd.min.js"></script>
+    <script>
+        if (typeof Chart === 'undefined') {
+            document.write('<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"><\/script>');
+        }
+    </script>
+</head>
+<body>
+
+<!-- Header -->
+<header class="header" id="main-header">
+    <div class="header-left">
+        <h1 id="app-title">ARC <span>Defender</span></h1>
+        <div class="threat-indicator-pill threat-normal" id="header-threat-indicator">
+            <span class="pulse-dot"></span>
+            <span id="header-threat-text">Threat: NORMAL</span>
+        </div>
+    </div>
+    <div class="header-controls">
+        <select id="time-range" aria-label="Select time range">
+            <option value="1">Last 1 hour</option>
+            <option value="6">Last 6 hours</option>
+            <option value="24" selected>Last 24 hours</option>
+            <option value="72">Last 3 days</option>
+            <option value="168">Last 7 days</option>
+        </select>
+
+        <select id="simulate-attack-select" aria-label="Select attack pattern to simulate">
+            <option value="" disabled selected>⚡ Simulate Attack...</option>
+            <option value="brute_force">Brute Force (/api/login)</option>
+            <option value="scanner">Vulnerability Path Scan (404s)</option>
+            <option value="high_rate">DoS High-Rate Flood</option>
+            <option value="error_spike">500 Server Error Spike</option>
+            <option value="multi_stage">Multi-Stage Kill Chain (Recon → Auth → Flood)</option>
+            <option value="normal">Normal Traffic Burst</option>
+        </select>
+        <button id="btn-simulate" class="btn-outline" title="Trigger simulated attack">Simulate</button>
+
+        <button id="btn-detect" title="Run rule-based threat detection">Run Detection</button>
+        <button id="btn-ml" title="Train ML model and score clients">Run ML</button>
+        
+        <button id="btn-refresh-toggle" class="btn-outline" title="Toggle Auto-Refresh (10s)">
+            <span id="refresh-state">Auto: ON</span>
+        </button>
+        <button id="btn-theme-toggle" class="btn-icon" aria-label="Toggle theme" title="Toggle Dark/Light Mode">
+            <span id="theme-icon">☀️</span>
+        </button>
+    </div>
+</header>
+
+<!-- Navigation -->
+<nav class="nav" id="main-nav">
+    <button data-tab="overview" class="active" id="nav-btn-overview">Overview</button>
+    <button data-tab="traffic" id="nav-btn-traffic">Traffic</button>
+    <button data-tab="security" id="nav-btn-security">
+        Security <span class="nav-alert-badge hidden" id="nav-alert-badge">0</span>
+    </button>
+    <button data-tab="requests" id="nav-btn-requests">
+        Requests <span class="nav-alert-badge" id="nav-request-badge" style="background:transparent;color:var(--text-secondary);border:1px solid var(--border)">0</span>
+    </button>
+    <button data-tab="integration" id="nav-btn-integration">
+        🔌 Connect Your API
+    </button>
+</nav>
+
+<!-- Main Content -->
+<main class="main" id="main-content">
+
+    <!-- ================= OVERVIEW TAB ================= -->
+    <div id="tab-overview" class="tab-content active">
+
+        <!-- Threat Alert Banner -->
+        <div id="overview-threat-banner" class="threat-alert-banner banner-normal">
+            <div class="threat-banner-content">
+                <span class="pulse-dot"></span>
+                <div>
+                    <div class="threat-banner-title" id="banner-threat-title">Threat Status: NORMAL</div>
+                    <div class="threat-banner-desc" id="banner-threat-desc">No active attacks detected across monitored endpoints.</div>
+                </div>
+            </div>
+            <div class="header-actions">
+                <button class="btn-sm btn-outline" id="banner-view-security-btn">View Security Feed</button>
+            </div>
+        </div>
+
+        <!-- Stats -->
+        <div class="stats-grid">
+            <div class="stat-card" id="card-stat-requests">
+                <div class="label">Total Requests</div>
+                <div class="value info" id="stat-requests">-</div>
+            </div>
+            <div class="stat-card" id="card-stat-clients">
+                <div class="label">Unique Clients</div>
+                <div class="value" id="stat-clients">-</div>
+            </div>
+            <div class="stat-card" id="card-stat-errors">
+                <div class="label">Errors (4xx / 5xx)</div>
+                <div class="value danger" id="stat-errors">-</div>
+            </div>
+            <div class="stat-card" id="card-stat-avg-time">
+                <div class="label">Avg Response Time</div>
+                <div class="value" id="stat-avg-time">-</div>
+            </div>
+            <div class="stat-card" id="card-stat-alerts">
+                <div class="label">Active Threat Alerts</div>
+                <div class="value warning" id="stat-alerts">-</div>
+            </div>
+        </div>
+
+        <!-- Charts row: Timeline + Status breakdown -->
+        <div class="grid-2">
+            <div class="card">
+                <div class="card-header">
+                    <span>Traffic & Error Volume Over Time</span>
+                </div>
+                <div class="card-body">
+                    <div class="chart-container">
+                        <canvas id="chart-timeline"></canvas>
+                    </div>
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-header">
+                    <span>HTTP Status Code Distribution</span>
+                </div>
+                <div class="card-body">
+                    <div class="chart-container">
+                        <canvas id="chart-status-overview"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tables: Top Endpoints + Recent Security Alerts -->
+        <div class="grid-2">
+            <div class="card">
+                <div class="card-header">
+                    <span>Top Active Endpoints</span>
+                    <button class="btn-sm btn-outline" id="overview-view-traffic-btn">Full Traffic</button>
+                </div>
+                <div class="card-body table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Endpoint</th>
+                                <th>Requests</th>
+                                <th>Avg Latency</th>
+                                <th>Error Rate</th>
+                            </tr>
+                        </thead>
+                        <tbody id="table-top-endpoints">
+                            <tr><td colspan="4" class="text-muted">Loading...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-header">
+                    <span>Recent Threat Alerts</span>
+                    <button class="btn-sm btn-outline" id="overview-ack-all-btn">Acknowledge All</button>
+                </div>
+                <div class="card-body table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Severity</th>
+                                <th>Threat</th>
+                                <th>Target IP</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="table-recent-alerts">
+                            <tr><td colspan="5" class="text-muted">No alerts</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- ================= TRAFFIC TAB ================= -->
+    <div id="tab-traffic" class="tab-content">
+
+        <!-- Traffic Volume & Latency Trend Chart -->
+        <div class="card">
+            <div class="card-header">
+                <span>Traffic Volume & Response Latency Timeline</span>
+                <span class="text-muted text-small">15-minute rolling aggregates</span>
+            </div>
+            <div class="card-body">
+                <div class="chart-container-lg">
+                    <canvas id="chart-traffic-timeline"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Traffic Charts Grid -->
+        <div class="grid-2">
+            <!-- Top Endpoints Chart -->
+            <div class="card">
+                <div class="card-header">Top Endpoints by Volume</div>
+                <div class="card-body">
+                    <div class="chart-container">
+                        <canvas id="chart-endpoints-bar"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Latency Distribution Histogram -->
+            <div class="card">
+                <div class="card-header">Latency Distribution</div>
+                <div class="card-body">
+                    <div class="chart-container">
+                        <canvas id="chart-latency"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Methods + Status Charts -->
+        <div class="grid-2">
+            <div class="card">
+                <div class="card-header">HTTP Methods Distribution</div>
+                <div class="card-body">
+                    <div class="chart-container-sm">
+                        <canvas id="chart-methods"></canvas>
+                    </div>
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-header">Status Codes Breakdown</div>
+                <div class="card-body">
+                    <div class="chart-container-sm">
+                        <canvas id="chart-status-traffic"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Latency Percentiles Cards -->
+        <div class="card">
+            <div class="card-header">Latency Benchmarks</div>
+            <div class="card-body">
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="label">Average</div>
+                        <div class="value" id="latency-avg">-</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="label">p50 (Median)</div>
+                        <div class="value" id="latency-p50">-</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="label">p95</div>
+                        <div class="value" id="latency-p95">-</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="label">p99 (Tail)</div>
+                        <div class="value" id="latency-p99">-</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Endpoints Table with search filter -->
+        <div class="card">
+            <div class="card-header">
+                <span>All Monitored Endpoints</span>
+                <input type="text" id="filter-endpoint-input" placeholder="Search path (e.g. /api)..." style="width: 200px;">
+            </div>
+            <div class="card-body table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Path</th>
+                            <th>Requests</th>
+                            <th>Avg Response Time</th>
+                            <th>Error Rate</th>
+                        </tr>
+                    </thead>
+                    <tbody id="table-traffic-endpoints">
+                        <tr><td colspan="4" class="text-muted">Loading...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Clients + Errors -->
+        <div class="grid-2">
+            <div class="card">
+                <div class="card-header">
+                    <span>Top Client Sources</span>
+                    <input type="text" id="filter-client-input" placeholder="Search IP..." style="width: 150px;">
+                </div>
+                <div class="card-body table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>IP Address</th>
+                                <th>Requests</th>
+                                <th>Last Seen</th>
+                                <th>User-Agent</th>
+                            </tr>
+                        </thead>
+                        <tbody id="table-traffic-clients">
+                            <tr><td colspan="4" class="text-muted">Loading...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">HTTP Error Log Breakdown</div>
+                <div class="card-body">
+                    <div style="display:flex;gap:24px;margin-bottom:12px;">
+                        <div><span class="text-muted">4xx Client Errors:</span> <strong id="error-4xx" class="status-4xx">-</strong></div>
+                        <div><span class="text-muted">5xx Server Errors:</span> <strong class="status-5xx" id="error-5xx">-</strong></div>
+                    </div>
+                    <table>
+                        <thead>
+                            <tr><th>Status Code</th><th>Occurrences</th></tr>
+                        </thead>
+                        <tbody id="table-common-errors">
+                            <tr><td colspan="2" class="text-muted">Loading...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- ================= SECURITY TAB ================= -->
+    <div id="tab-security" class="tab-content">
+
+        <!-- Threat Alert Management Card -->
+        <div class="card">
+            <div class="card-header">
+                <div style="display:flex;align-items:center;gap:10px;">
+                    <span>Threat Alert Center</span>
+                    <span class="badge badge-critical" id="security-threat-badge">NORMAL</span>
+                </div>
+                <div class="header-actions">
+                    <button class="btn-sm" id="btn-security-detect">⚡ Scan Rules</button>
+                    <button class="btn-sm btn-outline" id="btn-security-ack-all">Acknowledge All</button>
+                    <button class="btn-sm btn-danger" id="btn-security-clear">Clear Alerts</button>
+                </div>
+            </div>
+            <div class="card-body">
+                <!-- Alert Filtering Toolbar -->
+                <div class="filter-toolbar">
+                    <div class="filter-item">
+                        <label for="filter-alert-severity">Severity:</label>
+                        <select id="filter-alert-severity">
+                            <option value="all">All Severities</option>
+                            <option value="critical">Critical</option>
+                            <option value="high">High</option>
+                            <option value="medium">Medium</option>
+                            <option value="low">Low</option>
+                        </select>
+                    </div>
+                    <div class="filter-item">
+                        <label for="filter-alert-status">Status:</label>
+                        <select id="filter-alert-status">
+                            <option value="all">All Alerts</option>
+                            <option value="active" selected>Active Only</option>
+                            <option value="acknowledged">Acknowledged Only</option>
+                        </select>
+                    </div>
+                    <div class="filter-count-indicator" id="alert-count-indicator">
+                        Active alerts: 0
+                    </div>
+                </div>
+
+                <!-- Alerts Table -->
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Timestamp</th>
+                                <th>Severity</th>
+                                <th>Threat Type</th>
+                                <th>Attacker IP</th>
+                                <th>Detection Details</th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="table-security-alerts">
+                            <tr><td colspan="7" class="text-muted">Loading alerts...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Suspicious Clients -->
+        <div class="card">
+            <div class="card-header">
+                <span>Suspicious Client Risk Profiles</span>
+                <span class="text-muted text-small">Calculated from multi-signal security score</span>
+            </div>
+            <div class="card-body table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Client IP</th>
+                            <th>Alerts</th>
+                            <th>Threat Types</th>
+                            <th>Attack Phase</th>
+                            <th style="min-width:160px;">Risk Score</th>
+                            <th>Risk Factors</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="table-suspicious-clients">
+                        <tr><td colspan="7" class="text-muted">Loading suspicious clients...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- ML Section -->
+        <div class="grid-2">
+            <div class="card">
+                <div class="card-header">
+                    <span>Machine Learning Anomaly Engine</span>
+                    <button class="btn-sm btn-primary" id="btn-train-ml">Run Isolation Forest</button>
+                </div>
+                <div class="card-body" id="ml-status-info">
+                    <p class="text-muted">Loading ML diagnostics...</p>
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-header">
+                    <div style="display:flex;align-items:center;gap:10px;">
+                        <span>ML Scored Anomaly Detections</span>
+                        <span class="badge badge-critical" id="ml-badge-count">0 Anomalies</span>
+                    </div>
+                    <div class="header-actions">
+                        <div class="filter-chips">
+                            <span class="filter-chip active" id="ml-chip-anomalies" style="cursor:pointer;" title="Show only anomalous clients (Score ≥ 70)">Anomalies</span>
+                            <span class="filter-chip" id="ml-chip-all" style="cursor:pointer;" title="Show all scored clients">All Scored</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="card-body table-wrap ml-table-scroll" style="max-height: 290px; overflow-y: auto; padding: 0;">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>IP</th>
+                                <th style="min-width:130px;">Anomaly Score</th>
+                                <th>Status</th>
+                                <th>Primary Drivers (Z-Score Attribution)</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="table-ml-results">
+                            <tr><td colspan="5" class="text-muted">Loading ML results...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- ================= REQUESTS TAB (Traffic Filtering) ================= -->
+    <div id="tab-requests" class="tab-content">
+        <div class="card">
+            <div class="card-header">
+                <span>Real-Time Request Log & Traffic Filtering</span>
+                <span class="text-muted text-small" id="requests-auto-info">Live telemetry feed</span>
+            </div>
+            <div class="card-body">
+
+                <!-- Traffic Filtering Toolbar -->
+                <div class="filter-toolbar" id="requests-filter-toolbar">
+                    <div class="filter-item">
+                        <label for="filter-req-search">Search:</label>
+                        <input type="text" id="filter-req-search" placeholder="Path, IP, or User-Agent..." style="width:190px;">
+                    </div>
+
+                    <div class="filter-item">
+                        <label for="filter-req-method">Method:</label>
+                        <select id="filter-req-method">
+                            <option value="ALL">All Methods</option>
+                            <option value="GET">GET</option>
+                            <option value="POST">POST</option>
+                            <option value="PUT">PUT</option>
+                            <option value="DELETE">DELETE</option>
+                            <option value="PATCH">PATCH</option>
+                        </select>
+                    </div>
+
+                    <div class="filter-item">
+                        <label for="filter-req-status">Status:</label>
+                        <select id="filter-req-status">
+                            <option value="ALL">All Status</option>
+                            <option value="2xx">2xx Success</option>
+                            <option value="3xx">3xx Redirect</option>
+                            <option value="4xx">4xx Client Error</option>
+                            <option value="5xx">5xx Server Error</option>
+                        </select>
+                    </div>
+
+                    <div class="filter-item">
+                        <label for="filter-req-latency">Min Latency:</label>
+                        <select id="filter-req-latency">
+                            <option value="0">Any Latency</option>
+                            <option value="20">&gt; 20ms</option>
+                            <option value="50">&gt; 50ms</option>
+                            <option value="100">&gt; 100ms</option>
+                            <option value="300">&gt; 300ms</option>
+                        </select>
+                    </div>
+
+                    <div class="filter-chips">
+                        <span class="filter-chip" id="chip-errors" data-filter="errors">Errors (4xx/5xx)</span>
+                        <span class="filter-chip" id="chip-login" data-filter="login">Auth & Login</span>
+                        <span class="filter-chip" id="chip-slow" data-filter="slow">Slow (&gt;100ms)</span>
+                        <span class="filter-chip" id="chip-post" data-filter="post">POST Only</span>
+                    </div>
+
+                    <button class="btn-sm btn-outline" id="btn-clear-filters" title="Reset all filters">Reset</button>
+
+                    <div class="filter-count-indicator" id="requests-count-indicator">
+                        Showing 0 of 0 requests
+                    </div>
+                </div>
+
+                <!-- Requests Table -->
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Timestamp</th>
+                                <th>Client IP</th>
+                                <th>Method</th>
+                                <th>Path / Endpoint</th>
+                                <th>Status</th>
+                                <th>Response Time</th>
+                                <th>User-Agent</th>
+                            </tr>
+                        </thead>
+                        <tbody id="table-requests">
+                            <tr><td colspan="7" class="text-muted">Loading requests...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <!-- ================= INTEGRATION / CONNECT YOUR API TAB ================= -->
+    <div id="tab-integration" class="tab-content">
+        <div class="integration-container">
+
+            <div class="card" style="margin-bottom: 20px;">
+                <div class="card-header">
+                    <div>
+                        <h2 style="font-size: 1.15rem; margin-bottom: 4px;">Developer Integration Guide</h2>
+                        <p class="text-small text-muted">Connect your external APIs, web servers, or microservices to ARC Defender for real-time attack detection and ML anomaly scoring.</p>
+                    </div>
+                    <span class="badge badge-success">Ingest API: Ready & Listening</span>
+                </div>
+                <div class="integration-modes-grid">
+                    <div class="integration-mode-card">
+                        <div class="mode-icon">⚡</div>
+                        <div>
+                            <strong>Mode 1: Remote HTTP Telemetry Ingest</strong>
+                            <p class="text-small text-muted" style="margin-top: 4px;">Any external application (Python, Go, Java, Rust, Ruby, PHP) can stream HTTP telemetry events to ARC Defender via simple JSON POST requests.</p>
+                            <code class="mono text-small" style="display:inline-block; margin-top: 8px;">POST /arc/api/v1/ingest</code>
+                        </div>
+                    </div>
+                    <div class="integration-mode-card">
+                        <div class="mode-icon">📦</div>
+                        <div>
+                            <strong>Mode 2: Drop-in Node.js / Express Middleware</strong>
+                            <p class="text-small text-muted" style="margin-top: 4px;">If your app runs in Node.js, drop the <code>ArcDefenderClient</code> middleware directly into your Express or Connect router pipeline.</p>
+                            <code class="mono text-small" style="display:inline-block; margin-top: 8px;">app.use(arcClient.middleware());</code>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Code Snippets Showcase -->
+            <div class="card" style="margin-bottom: 20px;">
+                <div class="card-header">
+                    <div>
+                        <h3 style="font-size: 1rem; margin-bottom: 2px;">Code Integration Examples</h3>
+                        <p class="text-small text-muted">Select your language or framework to view integration code:</p>
+                    </div>
+                    <div class="snippet-tab-bar" id="snippet-lang-tabs">
+                        <button class="snippet-btn active" data-lang="express">Node.js (Express)</button>
+                        <button class="snippet-btn" data-lang="fastapi">Python (FastAPI)</button>
+                        <button class="snippet-btn" data-lang="flask">Python (Flask)</button>
+                        <button class="snippet-btn" data-lang="go">Go (Gin)</button>
+                        <button class="snippet-btn" data-lang="curl">cURL / HTTP</button>
+                    </div>
+                </div>
+
+                <div class="code-container">
+                    <pre id="code-snippet-display" class="code-block mono text-small"></pre>
+                    <div class="code-actions">
+                        <button class="btn-sm btn-outline" id="btn-copy-snippet">Copy Code</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Live Ingestion Sandbox -->
+            <div class="card">
+                <div class="card-header">
+                    <div>
+                        <h3 style="font-size: 1rem; margin-bottom: 2px;">Live Ingestion Sandbox (Interactive Test)</h3>
+                        <p class="text-small text-muted">Test sending an HTTP telemetry log into ARC Defender right now and inspect the real-time response:</p>
+                    </div>
+                    <div style="display: flex; gap: 8px;">
+                        <button class="btn-sm btn-outline" id="btn-prefill-normal">Pre-fill Normal Event</button>
+                        <button class="btn-sm btn-outline" id="btn-prefill-attack">Pre-fill Attack Event</button>
+                    </div>
+                </div>
+
+                <div class="sandbox-grid">
+                    <form id="ingest-sandbox-form" class="sandbox-form" onsubmit="event.preventDefault(); sendCustomIngestEvent();">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="sandbox-ip">Client IP Address</label>
+                                <input type="text" id="sandbox-ip" class="input-control mono" value="198.51.100.77" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="sandbox-method">HTTP Method</label>
+                                <select id="sandbox-method" class="input-control">
+                                    <option value="GET">GET</option>
+                                    <option value="POST" selected>POST</option>
+                                    <option value="PUT">PUT</option>
+                                    <option value="DELETE">DELETE</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="sandbox-path">Request Path</label>
+                                <input type="text" id="sandbox-path" class="input-control mono" value="/api/v1/auth/login" required>
+                            </div>
+                        </div>
+
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="sandbox-status">HTTP Status Code</label>
+                                <input type="number" id="sandbox-status" class="input-control mono" value="401" min="100" max="599">
+                            </div>
+                            <div class="form-group">
+                                <label for="sandbox-latency">Response Time (ms)</label>
+                                <input type="number" id="sandbox-latency" class="input-control mono" value="18.5" step="0.1">
+                            </div>
+                            <div class="form-group">
+                                <label for="sandbox-ua">User-Agent</label>
+                                <input type="text" id="sandbox-ua" class="input-control" value="python-requests/2.31.0 SecurityScanner">
+                            </div>
+                        </div>
+
+                        <div class="form-row" style="align-items: center; justify-content: space-between; margin-top: 10px;">
+                            <div style="display:flex; gap: 16px;">
+                                <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
+                                    <input type="checkbox" id="sandbox-is-login" checked>
+                                    <span class="text-small">Is Authentication Attempt</span>
+                                </label>
+                                <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
+                                    <input type="checkbox" id="sandbox-login-success">
+                                    <span class="text-small">Authentication Succeeded</span>
+                                </label>
+                            </div>
+                            <button type="submit" class="btn btn-primary" id="btn-submit-ingest">
+                                📡 Ingest Telemetry Event
+                            </button>
+                        </div>
+                    </form>
+
+                    <div class="sandbox-result">
+                        <div class="result-header">
+                            <span class="text-small" style="font-weight: 600;">Ingest API Response</span>
+                            <span id="sandbox-status-pill" class="badge badge-outline">Awaiting submission</span>
+                        </div>
+                        <pre id="sandbox-response-json" class="mono text-small" style="padding: 12px; background: var(--bg-canvas); border-radius: 6px; border: 1px solid var(--border); overflow-x: auto; min-height: 120px; color: var(--text-secondary);">{
+  "hint": "Submit the form to send real-time telemetry into ARC Defender."
+}</pre>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+</main>
+
+<script src="/static/dashboard.js"></script>
+</body>
+</html>
